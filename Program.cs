@@ -21,56 +21,76 @@ namespace ConsoleApplication5
     }
 
     class Program
-    { 
-        static int CalculateNewBalance(int kontoBalance, int amount) {
+    {
+        static int CalculateNewBalance(int kontoBalance, int amount)
+        {
             //Expensive computation
             Thread.Sleep(RandomGenThrSafe.Next(25));
             return kontoBalance - amount;
         }
 
+        // Führt Überweisung zwischen zwei Konten durch.
+        // source: PK des Quellkontos, dest: PK des Zielkontos
+        static bool TransferMoney(OracleConnection oc, int source, int dest, int amount)
+        {
+            // Transaktion starten
+            OracleTransaction txn = oc.BeginTransaction();
+            try
+            {
+                OracleCommand cmd = oc.CreateCommand();
 
-        static bool TransferMoney(OracleConnection oc, int source, int dest, int amount) {
-                    OracleTransaction txn = oc.BeginTransaction();
-                    try {
-                        OracleCommand cmd = oc.CreateCommand();
+                // Kontostand des Quellkontos lesen
+                int sourceBalance = -1;
+                cmd.CommandText = "SELECT balance FROM konto WHERE kid=" + source;
+                OracleDataReader reader = cmd.ExecuteReader();
+                if (reader.Read())
+                {   // Query mit einer Ergebniszeile, wenn es das Quellkonto nicht gibt -> Felher werfen
+                    sourceBalance = reader.GetInt32(0);
+                }
+                else
+                {
+                    throw new Exception("invalid source konto specified: " + source);
+                }
+                reader.Close();
 
-                        int sourceBalance = -1;
-                        cmd.CommandText = "SELECT balance FROM konto WHERE kid="+source;
-                        // Query mit einer Ergebniszeile
-                        OracleDataReader reader = cmd.ExecuteReader();
-                        if(reader.Read()) {
-                            sourceBalance = reader.GetInt32(0);
-                        } else {
-                            throw new Exception("invalid source konto specified: "+source);
-                        }
-                        reader.Close();
+                // Ein Konto darf nicht negativ werden
+                if (sourceBalance < 0)
+                {
+                    throw new Exception("this should not happen!!!");
+                }
 
-                        if(sourceBalance < 0) {
-                            throw new Exception("this should not happen!!!");
-                        }
+                // Neuen Kontostand des Quellkontos berechnen.
+                // Berechnung wird durch C# durchgeführt, könnte theoretisch komplex sein (Gebühren, ...)
+                int newBalance = CalculateNewBalance(sourceBalance, amount);
 
-                        int newBalance = CalculateNewBalance(sourceBalance, amount);
+                // Sofern die Überweisung nicht zu einem negativen Kontostand führen würde
+                // Quell und Zielkonto mit aktualisierten Werten updaten.
+                if (newBalance > 0)
+                {
+                    cmd.CommandText = "UPDATE konto SET balance = " + newBalance + " WHERE kid=" + source;
+                    int modifiedRows = cmd.ExecuteNonQuery(); // Anzahl der veränderten Zeilen
+                    cmd.CommandText = "UPDATE konto SET balance = balance + " + amount + " WHERE kid=" + dest;
+                    cmd.ExecuteNonQuery();
+                    txn.Commit();
+                    return true; // Überweisung war erfolgreich
+                }
 
-                        if(newBalance > 0) {
-                            cmd.CommandText = "UPDATE konto SET balance = " + newBalance +" WHERE kid="+source;
-                            int modifiedRows = cmd.ExecuteNonQuery(); // Anzahl der veränderten Zeilen
-                            cmd.CommandText = "UPDATE konto SET balance = balance + " + amount +" WHERE kid="+dest;
-                            cmd.ExecuteNonQuery();                            
-                            txn.Commit();
-                            return true;
-                        }
+                txn.Rollback();
+            }
+            catch (Exception e)
+            {
+                txn.Rollback();
+                Console.WriteLine(e.Message);
+            }
 
-                        txn.Rollback();
-                    }catch(Exception e) {
-                        txn.Rollback();
-                        Console.WriteLine(e.Message);
-                    }
-
-                    return false;
+            return false;
         }
 
-        static void TestTransferMoneyRandom(OracleConnection oc) {
-            for(int i=0; i < 1000; i++) {
+        //Führt 1000 Überweisungen zwischen zufälligen Konten aus    
+        static void TestTransferMoneyRandom(OracleConnection oc)
+        {
+            for (int i = 0; i < 1000; i++)
+            {
                 int source = RandomGenThrSafe.Next(4);
                 int dest = RandomGenThrSafe.Next(4);
                 int difference = RandomGenThrSafe.Next(1000000);
@@ -78,27 +98,34 @@ namespace ConsoleApplication5
             }
         }
 
-        static void TestTransferMoneyFromKingToHerbert(OracleConnection oc) {
-            for(int i=0; i < 1000; i++) {
+        //Führt 1000 Überweisungen von King -> Herbert aus
+        static void TestTransferMoneyFromKingToHerbert(OracleConnection oc)
+        {
+            for (int i = 0; i < 1000; i++)
+            {
                 TransferMoney(oc, 0, 3, 1);
             }
         }
 
-        static void ExecuteTests(object thrIdx) {
+        static void ExecuteTests(object thrIdx)
+        {
             string connectString = "Data Source=(DESCRIPTION=(ADDRESS_LIST=(ADDRESS=(PROTOCOL=TCP)(HOST=localhost)(PORT=1521)))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=FREEPDB1)));User Id=system;Password=dbi2324;";
 
-            try {
-            using (OracleConnection oc = new OracleConnection(connectString))
+            try
             {
-                oc.Open();
-                
-                // Uncomment the test you would like to execute below
+                using (OracleConnection oc = new OracleConnection(connectString))
+                {
+                    oc.Open();
+
+                    // Uncomment the test you would like to execute below
                     // TestTransferMoneyFromKingToHerbert(oc);
                     // TestTransferMoneyRandom(oc);
-            
-                oc.Close();
+
+                    oc.Close();
+                }
             }
-            }catch(OracleException e) {
+            catch (OracleException e)
+            {
                 Console.WriteLine(e.Message);
                 Console.WriteLine(e.StackTrace);
             }
